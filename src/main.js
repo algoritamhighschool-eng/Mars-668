@@ -1,4 +1,3 @@
-
 const pageTransition = document.querySelector('#page-transition');
 const revealSite = () => {
     requestAnimationFrame(() => pageTransition.classList.add('is-hidden'));
@@ -38,6 +37,8 @@ let siteSfxGain;
 let siteMusicGain;
 let sandNoiseBuffer;
 let lastSandSoundAt = 0;
+let lastVolumeDragSoundAt = 0;
+let activeVolumePointerId = null;
 let ambientNoteIndex = 0;
 
 const ambientNotes = [220, 261.63, 329.63, 392, 329.63, 261.63];
@@ -149,6 +150,61 @@ function playSandSound(event) {
     }, { once: true });
 }
 
+function playButtonSound() {
+    if (!siteAudioContext || siteAudioContext.state !== 'running') return;
+
+    const now = siteAudioContext.currentTime;
+    const oscillator = siteAudioContext.createOscillator();
+    const envelope = siteAudioContext.createGain();
+
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(620, now);
+    oscillator.frequency.exponentialRampToValueAtTime(440, now + 0.05);
+    envelope.gain.setValueAtTime(0.0001, now);
+    envelope.gain.exponentialRampToValueAtTime(0.07, now + 0.004);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, now + 0.06);
+
+    oscillator.connect(envelope);
+    envelope.connect(siteSfxGain);
+    oscillator.start(now);
+    oscillator.stop(now + 0.065);
+    oscillator.addEventListener('ended', () => {
+        oscillator.disconnect();
+        envelope.disconnect();
+    }, { once: true });
+}
+
+function playVolumeDragSound() {
+    if (!siteAudioContext || siteAudioContext.state !== 'running' || !sandNoiseBuffer) return;
+
+    const now = siteAudioContext.currentTime;
+    if (now - lastVolumeDragSoundAt < 0.12) return;
+    lastVolumeDragSoundAt = now;
+
+    const source = siteAudioContext.createBufferSource();
+    const filter = siteAudioContext.createBiquadFilter();
+    const envelope = siteAudioContext.createGain();
+
+    source.buffer = sandNoiseBuffer;
+    filter.type = 'bandpass';
+    filter.frequency.value = 1200;
+    filter.Q.value = 0.8;
+    envelope.gain.setValueAtTime(0.0001, now);
+    envelope.gain.exponentialRampToValueAtTime(0.07, now + 0.01);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
+
+    source.connect(filter);
+    filter.connect(envelope);
+    envelope.connect(siteSfxGain);
+    source.start(now);
+    source.stop(now + 0.1);
+    source.addEventListener('ended', () => {
+        source.disconnect();
+        filter.disconnect();
+        envelope.disconnect();
+    }, { once: true });
+}
+
 function getSavedVolume(key, fallback) {
     const saved = localStorage.getItem(key);
     if (saved === null) return fallback;
@@ -246,8 +302,20 @@ muteGameAudio.checked = localStorage.getItem('mars668-mute-game-audio') === 'tru
 updateAudioSettings(false);
 window.addEventListener('pointerdown', startSiteAudio);
 window.addEventListener('keydown', startSiteAudio);
-sfxVolume.addEventListener('input', () => updateAudioSettings());
-musicVolume.addEventListener('input', () => updateAudioSettings());
+for (const volumeSlider of [sfxVolume, musicVolume]) {
+    volumeSlider.addEventListener('pointerdown', event => {
+        activeVolumePointerId = event.pointerId;
+    });
+    volumeSlider.addEventListener('input', () => {
+        updateAudioSettings();
+        if (activeVolumePointerId !== null) playVolumeDragSound();
+    });
+}
+const stopVolumeDragSound = event => {
+    if (event.pointerId === activeVolumePointerId) activeVolumePointerId = null;
+};
+window.addEventListener('pointerup', stopVolumeDragSound);
+window.addEventListener('pointercancel', stopVolumeDragSound);
 muteGameAudio.addEventListener('change', () => updateAudioSettings());
 gameFrame.addEventListener('load', () => {
     if (!gameFrame.getAttribute('src')) return;
@@ -258,7 +326,10 @@ gameFrame.addEventListener('load', () => {
 function sendSandEvent(type, event) {
     if (landingPage.classList.contains('hidden')) return;
 
-    if (type === 'move') playSandSound(event);
+    if (type === 'move'
+        && !(event.target instanceof Element && event.target.closest('#settings-widget'))) {
+        playSandSound(event);
+    }
     sandBackground.contentWindow.postMessage({
         type: `pixel-sand-${type}`,
         clientX: event.clientX,
@@ -271,6 +342,10 @@ window.addEventListener('pointermove', event => sendSandEvent('move', event), { 
 window.addEventListener('pointerup', event => sendSandEvent('up', event));
 document.documentElement.addEventListener('pointerleave', event => sendSandEvent('leave', event));
 window.addEventListener('blur', event => sendSandEvent('leave', event));
+document.addEventListener('click', event => {
+    const button = event.target instanceof Element ? event.target.closest('button') : null;
+    if (button && !button.disabled) playButtonSound();
+});
 
 window.addEventListener('message', event => {
     if (event.source !== sandBackground.contentWindow
