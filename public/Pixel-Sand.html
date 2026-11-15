@@ -59,10 +59,24 @@
   let palette = EARTH_PALETTE;
   let held = [], falling = [], tone = 0, frame = 0, filled = 0;
   let earthCovered = false;
+  let lastSandSoundNotificationAt = 0;
   const ptr = { x: 0, y: 0, ax: 0, ay: 0, vx: 0, vy: 0, inside: false };
 
   const pack  = (r, g, b) => ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0;
   const clamp = v => v < 0 ? 0 : v > 255 ? 255 : v | 0;
+
+  function hasSandAt(cx, cy) {
+    const x = Math.floor(cx), y = Math.floor(cy);
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        const px = x + dx, py = y + dy;
+        if (px < 0 || py < 0 || px >= W || py >= H) continue;
+        const index = py * W + px;
+        if (grid[index] || buf[index]) return true;
+      }
+
+    return false;
+  }
 
   function grainColor() {
     const n = palette.length, p = tone % n, i = Math.floor(p), f = p - i;
@@ -99,12 +113,20 @@
       for (let dx = -RADIUS; dx <= RADIUS; dx++) {
         const d2 = dx * dx + dy * dy;
         if (d2 > r2 || Math.random() > DENSITY * (1 - (d2 / r2) * 0.6)) continue;
-        held.push({ x: bx + dx, y: by + dy, c: grainColor() });
+        const x = bx + dx, y = by + dy;
+        if (x < 0 || y < 0 || x >= W || y >= H || grid[y * W + x]) continue;
+        held.push({ x, y, c: grainColor() });
       }
-    tone += 0.01;
+    if (held.length) tone += 0.01;
+  }
+
+  function notifySandFalling() {
+    lastSandSoundNotificationAt = performance.now();
+    parent.postMessage({ type: 'pixel-sand-falling' }, location.origin);
   }
 
   function dropClump() {
+    if (!held.length) return;
     for (const g of held)
       falling.push({
         x: g.x + 0.5, y: g.y + 0.5, c: g.c,
@@ -112,6 +134,7 @@
         vy: ptr.vy * FLING * 0.5 + Math.random() * 0.3 - 0.15,
       });
     held = [];
+    notifySandFalling();
   }
 
   
@@ -223,6 +246,9 @@
   function loop() {
     frame++;
     for (let s = 0; s < SUBSTEPS; s++) { moveFalling(); stepGrid(); }
+    if (falling.length && performance.now() - lastSandSoundNotificationAt >= 250) {
+      notifySandFalling();
+    }
     checkEarthCoverage();
     ptr.vx *= 0.8; ptr.vy *= 0.8;
     render();
@@ -235,9 +261,18 @@
     ptr.vx = ptr.vx * 0.5 + (x - ptr.x) * 0.5;
     ptr.vy = ptr.vy * 0.5 + (y - ptr.y) * 0.5;
     ptr.x = x; ptr.y = y;
-    if (!ptr.inside) { ptr.inside = true; ptr.ax = x; ptr.ay = y; formClump(x, y); return; }
+    if (!ptr.inside) {
+      ptr.inside = true;
+      ptr.ax = x;
+      ptr.ay = y;
+      if (!hasSandAt(x, y)) formClump(x, y);
+      return;
+    }
     if (Math.hypot(x - ptr.ax, y - ptr.ay) >= MOVE_STEP) {
-      dropClump(); formClump(x, y); ptr.ax = x; ptr.ay = y;
+      dropClump();
+      if (!hasSandAt(x, y)) formClump(x, y);
+      ptr.ax = x;
+      ptr.ay = y;
     }
   }
   function onLeave() {
@@ -265,4 +300,3 @@
 </script>
 </body>
 </html>
-
