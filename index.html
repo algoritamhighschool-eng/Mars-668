@@ -1,0 +1,145 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/src/style.css">
+    <title>Mars-668</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Press+Start+2P&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <div id="page-transition" aria-hidden="true"></div>
+
+    <div id="world-background" aria-hidden="true">
+        <div id="mars-world" class="world-surface"></div>
+        <div id="earth-world" class="world-surface">
+            <img id="earth-sand-layer" alt="">
+        </div>
+    </div>
+
+    <iframe
+        id="sand-background"
+        src="%BASE_URL%Pixel-Sand.html"
+        title="Animated pixel sand background"
+        aria-hidden="true"
+        tabindex="-1">
+    </iframe>
+
+    <section id="landing-page">
+
+        <header class="title-container">
+            <button id="about-us-button" type="button" aria-label="About us">
+                <img src="/images/AboutUs.png" alt="">
+            </button>
+            <div class="title-art">
+                <img src="/images/NASLOV1.png" class="title-image title-image-earth" alt="Mars 668">
+                <img src="/images/NASLOV2.png" class="title-image title-image-mars" alt="" aria-hidden="true">
+            </div>
+        </header>
+
+        <main class="landing-content">
+
+            <section class="description-container">
+                <img src="/images/DESCRIPTION1.png" class="description-frame description-frame-earth" alt="" aria-hidden="true">
+                <img src="/images/DESCRIPTION2.png" class="description-frame description-frame-mars" alt="" aria-hidden="true">
+                <h2 class="description-heading">
+                    <img src="/images/DESCRIPTION.png" class="description-label" alt="Description">
+                </h2>
+
+                <p class="description-text">
+                    After a long journey, you arrive to Mars. You are the first human to set foot on the red planet.
+                    A non-expected occurence happens, and you are left with a broken spaceship.
+                    Can you survive on Mars and find a way to get back home?
+                </p>
+            </section>
+
+            <div class="play-container">
+                <button id="play-button" aria-label="Play game">
+                    <img src="/images/PLAY.png" class="play-image" alt="">
+                </button>
+            </div>
+
+        </main>
+    </section>
+
+    <section id="about-page" class="hidden" aria-labelledby="about-title">
+        <header class="about-header">
+            <button id="about-back-button" type="button">BACK</button>
+        </header>
+        <main class="about-content">
+            <h1 id="about-title">ABOUT THE AUTHORS</h1>
+            <div class="credits-grid">
+                <section class="credit-group">
+                    <h2>GAME DEVELOPERS</h2>
+                    <p>Marko Leshoski<br>Bisera Illieva</p>
+                </section>
+                <section class="credit-group">
+                    <h2>WEB DEVELOPER</h2>
+                    <p>Nikola Miloshevski</p>
+                </section>
+                <section class="credit-group">
+                    <h2>ARTISTS</h2>
+                    <p>Eva Dimitrovska<br>Andrea Mladenovska</p>
+                </section>
+                <section class="credit-group">
+                    <h2>STORY WRITER &amp; GAME TESTER</h2>
+                    <p>Matej Sivakov</p>
+                </section>
+            </div>
+        </main>
+    </section>
+
+    <section id="game-page" class="hidden">
+
+        <header class="game-header">
+            <button id="back-button">BACK</button>
+            <div class="game-header-actions">
+                <span id="fullscreen-status" role="status" aria-live="polite"></span>
+                <button id="fullscreen-button" type="button">FULLSCREEN</button>
+            </div>
+        </header>
+
+        <div id="game-container">
+            <iframe id="game-frame" title="Mars-668 game"></iframe>
+        </div>
+
+    </section>
+
+    <div id="settings-widget">
+        <section id="settings-panel" class="hidden" aria-labelledby="settings-title">
+            <header class="settings-panel-header">
+                <h2 id="settings-title">SETTINGS</h2>
+                <button id="settings-close-button" type="button" aria-label="Close settings">×</button>
+            </header>
+            <label class="volume-setting" for="sfx-volume">
+                <span>SFX VOLUME</span>
+                <span class="volume-control">
+                    <input id="sfx-volume" type="range" min="0" max="100" step="1">
+                    <output id="sfx-value" for="sfx-volume">80%</output>
+                </span>
+            </label>
+            <label class="volume-setting" for="music-volume">
+                <span>MUSIC VOLUME</span>
+                <span class="volume-control">
+                    <input id="music-volume" type="range" min="0" max="100" step="1">
+                    <output id="music-value" for="music-volume">70%</output>
+                </span>
+            </label>
+            <label class="audio-mute-setting" for="mute-game-audio">
+                <input id="mute-game-audio" type="checkbox">
+                <span>MUTE ALL GAME AUDIO</span>
+            </label>
+        </section>
+        <button id="settings-button" aria-label="Open settings" aria-expanded="false" aria-controls="settings-panel">
+            <img src="/images/SETTINGS.png" alt="">
+        </button>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+
+</body>
+</html>
