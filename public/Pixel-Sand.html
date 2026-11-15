@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixel sand</title>
+<style>
+  html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: transparent;
+  }
+
+  #sand-bg {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 0;
+    pointer-events: none;      
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="sand-bg" aria-hidden="true" data-pixel="6"></canvas>
+
+<script>
+(() => {
+  const canvas = document.getElementById('sand-bg');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+ 
+  const PIXEL      = parseInt(canvas.dataset.pixel, 10) || 6; 
+  const RADIUS     = 5;     
+  const DENSITY    = 0.7;    
+  const MOVE_STEP  = 1.2;    
+  const GRAVITY    = 0.1;   
+  const FLING      = 0.25;   
+  const SUBSTEPS   = 2;      
+  const FULL_AT    = 0.96;
+
+  const EARTH_PALETTE = [
+    [255, 171, 53], [245, 128, 35], [225, 91, 24],
+    [198, 67, 22], [255, 147, 45], [217, 78, 26],
+  ];
+  const MARS_PALETTE = [
+    [235, 70, 50], [207, 48, 38], [177, 36, 31],
+    [245, 91, 57], [219, 57, 42], [145, 28, 27],
+  ];
+
+  
+  let W = 0, H = 0, grid = null, img = null, buf = null;
+  let palette = EARTH_PALETTE;
+  let held = [], falling = [], tone = 0, frame = 0, filled = 0;
+  let earthCovered = false;
+  const ptr = { x: 0, y: 0, ax: 0, ay: 0, vx: 0, vy: 0, inside: false };
+
+  const pack  = (r, g, b) => ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0;
+  const clamp = v => v < 0 ? 0 : v > 255 ? 255 : v | 0;
+
+  function grainColor() {
+    const n = palette.length, p = tone % n, i = Math.floor(p), f = p - i;
+    const a = palette[i], b = palette[(i + 1) % n], j = (Math.random() - 0.5) * 34;
+    return pack(clamp(a[0] + (b[0] - a[0]) * f + j),
+                clamp(a[1] + (b[1] - a[1]) * f + j),
+                clamp(a[2] + (b[2] - a[2]) * f + j));
+  }
+
+
+  function resize() {
+    const nW = Math.max(1, Math.ceil(innerWidth  / PIXEL));
+    const nH = Math.max(1, Math.ceil(innerHeight / PIXEL));
+    if (nW === W && nH === H) return;
+    const old = grid, oW = W, oH = H;
+    W = nW; H = nH;
+    grid = new Uint32Array(W * H);
+    if (old) {
+      const cw = Math.min(oW, W), ch = Math.min(oH, H);
+      for (let y = 0; y < ch; y++)
+        for (let x = 0; x < cw; x++)
+          grid[(H - 1 - y) * W + x] = old[(oH - 1 - y) * oW + x];
+    }
+    canvas.width = W; canvas.height = H;
+    img = ctx.createImageData(W, H);
+    buf = new Uint32Array(img.data.buffer);
+  }
+
+  
+  function formClump(cx, cy) {
+    held = [];
+    const r2 = RADIUS * RADIUS, bx = Math.floor(cx), by = Math.floor(cy);
+    for (let dy = -RADIUS; dy <= RADIUS; dy++)
+      for (let dx = -RADIUS; dx <= RADIUS; dx++) {
+        const d2 = dx * dx + dy * dy;
+        if (d2 > r2 || Math.random() > DENSITY * (1 - (d2 / r2) * 0.6)) continue;
+        held.push({ x: bx + dx, y: by + dy, c: grainColor() });
+      }
+    tone += 0.01;
+  }
+
+  function dropClump() {
+    for (const g of held)
+      falling.push({
+        x: g.x + 0.5, y: g.y + 0.5, c: g.c,
+        vx: ptr.vx * FLING + (Math.random() - 0.5) * 0.35,
+        vy: ptr.vy * FLING * 0.5 + Math.random() * 0.3 - 0.15,
+      });
+    held = [];
+  }
+
+  
+  function topOf(x) {
+    let y = 0;
+    while (y < H && !grid[y * W + x]) y++;
+    return y - 1;                         
+  }
+  function settle(x, c) {
+    x = Math.min(W - 1, Math.max(0, x));
+    let bestX = x, bestY = topOf(x);
+    for (let r = 1; r <= 3; r++) {
+      for (const nx of [x - r, x + r]) {
+        if (nx < 0 || nx >= W) continue;
+        const ny = topOf(nx);
+        if (ny > bestY) { bestY = ny; bestX = nx; }
+      }
+    }
+    if (bestY >= 0) grid[bestY * W + bestX] = c;
+  }
+
+  function moveFalling() {
+    let keep = 0;
+    for (let i = 0; i < falling.length; i++) {
+      const g = falling[i];
+      g.vy = Math.min(g.vy + GRAVITY / SUBSTEPS, 1);  
+      g.vx *= 0.99;
+      g.x += g.vx / SUBSTEPS;
+      g.y += g.vy;
+
+      if (g.x < 0) { g.x = 0; g.vx = -g.vx * 0.3; }
+      if (g.x >= W) { g.x = W - 0.01; g.vx = -g.vx * 0.3; }
+
+      const x = Math.floor(g.x), y = Math.floor(g.y);
+      if (y >= H) {
+        settle(x, g.c); continue;
+      }
+      if (y >= 0 && g.vy > 0 && (y === H - 1 || grid[y * W + x] || (y + 1 < H && grid[(y + 1) * W + x]))) {
+        settle(x, g.c); continue;
+      }
+      falling[keep++] = g;
+    }
+    falling.length = keep;
+  }
+
+  function stepGrid() {
+    const leftFirst = (frame & 1) === 0;
+    let count = 0;
+
+    for (let y = H - 2; y >= 0; y--) {
+      const row = y * W, below = row + W;
+      for (let i = 0; i < W; i++) {
+        const x = leftFirst ? i : W - 1 - i;
+        const c = grid[row + x];
+        if (!c) continue;
+        count++;
+        if (!grid[below + x]) { grid[below + x] = c; grid[row + x] = 0; continue; }
+        
+        const d = Math.random() < 0.5 ? -1 : 1;
+        let moved = false;
+        for (const dir of [d, -d]) {
+          const x1 = x + dir;
+          if (x1 < 0 || x1 >= W) continue;
+          if (!grid[below + x1]) { grid[below + x1] = c; grid[row + x] = 0; moved = true; break; }
+        }
+        if (moved) continue;
+        for (const dir of [d, -d]) {
+          const x1 = x + dir, x2 = x + 2 * dir;
+          if (x2 < 0 || x2 >= W) continue;
+          if (!grid[row + x1] && !grid[below + x2]) { grid[below + x2] = c; grid[row + x] = 0; break; }
+        }
+      }
+    }
+    const bottom = (H - 1) * W;
+    for (let x = 0; x < W; x++) if (grid[bottom + x]) count++;
+    filled = count / (W * H);
+  }
+
+  function checkEarthCoverage() {
+    if (!earthCovered && filled >= FULL_AT) {
+      earthCovered = true;
+      parent.postMessage({ type: 'pixel-sand-earth-covered' }, location.origin);
+    }
+  }
+
+  function resetForMars() {
+    palette = MARS_PALETTE;
+    grid.fill(0);
+    falling.length = 0;
+    held.length = 0;
+    filled = 0;
+    ptr.inside = false;
+    ptr.vx = 0;
+    ptr.vy = 0;
+  }
+
+ 
+  function render() {
+    buf.set(grid);
+    for (const g of falling) {
+      const x = Math.floor(g.x), y = Math.floor(g.y);
+      if (x >= 0 && y >= 0 && x < W && y < H) buf[y * W + x] = g.c;
+    }
+    for (const g of held)
+      if (g.x >= 0 && g.y >= 0 && g.x < W && g.y < H) buf[g.y * W + g.x] = g.c;
+    ctx.putImageData(img, 0, 0);
+  }
+
+  function loop() {
+    frame++;
+    for (let s = 0; s < SUBSTEPS; s++) { moveFalling(); stepGrid(); }
+    checkEarthCoverage();
+    ptr.vx *= 0.8; ptr.vy *= 0.8;
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  
+  function onMove(e) {
+    const x = e.clientX / PIXEL, y = e.clientY / PIXEL;
+    ptr.vx = ptr.vx * 0.5 + (x - ptr.x) * 0.5;
+    ptr.vy = ptr.vy * 0.5 + (y - ptr.y) * 0.5;
+    ptr.x = x; ptr.y = y;
+    if (!ptr.inside) { ptr.inside = true; ptr.ax = x; ptr.ay = y; formClump(x, y); return; }
+    if (Math.hypot(x - ptr.ax, y - ptr.ay) >= MOVE_STEP) {
+      dropClump(); formClump(x, y); ptr.ax = x; ptr.ay = y;
+    }
+  }
+  function onLeave() {
+    if (ptr.inside) dropClump();
+    held = [];
+    ptr.inside = false;
+  }
+
+  addEventListener('pointermove', onMove, { passive: true });
+  addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') onLeave(); });
+  document.documentElement.addEventListener('mouseleave', onLeave);
+  addEventListener('blur', onLeave);
+  addEventListener('message', e => {
+    if (e.source !== parent || e.origin !== location.origin || !e.data) return;
+    if (e.data.type === 'pixel-sand-move') onMove(e.data);
+    if (e.data.type === 'pixel-sand-up' && e.data.pointerType !== 'mouse') onLeave();
+    if (e.data.type === 'pixel-sand-leave') onLeave();
+    if (e.data.type === 'pixel-sand-reset') resetForMars();
+  });
+  addEventListener('resize', resize);
+
+  resize();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
+
