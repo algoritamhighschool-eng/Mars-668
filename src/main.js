@@ -1,12 +1,12 @@
 const pageTransition = document.querySelector('#page-transition');
 const revealSite = () => {
-    requestAnimationFrame(() => pageTransition.classList.add('is-hidden'));
+        requestAnimationFrame(() => pageTransition.classList.add('is-hidden'));
 };
 
 if (document.readyState === 'complete') {
-    revealSite();
+        revealSite();
 } else {
-    window.addEventListener('load', revealSite, { once: true });
+        window.addEventListener('load', revealSite, { once: true });
 }
 
 const landingPage = document.querySelector('#landing-page');
@@ -36,7 +36,12 @@ let siteAudioContext;
 let siteSfxGain;
 let siteMusicGain;
 let sandNoiseBuffer;
-let lastSandSoundAt = 0;
+let sandFallNoiseBuffer;
+let sandFallSoundSource;
+let sandFallSoundFilter;
+let sandFallSoundGain;
+let sandFallStopTimer;
+let sandFallFadeTimer;
 let lastVolumeDragSoundAt = 0;
 let activeVolumePointerId = null;
 let ambientNoteIndex = 0;
@@ -44,255 +49,295 @@ let ambientNoteIndex = 0;
 const ambientNotes = [220, 261.63, 329.63, 392, 329.63, 261.63];
 
 function playAmbientNote() {
-    if (!siteAudioContext || siteAudioContext.state !== 'running') return;
+        if (!siteAudioContext || siteAudioContext.state !== 'running') return;
 
     const now = siteAudioContext.currentTime;
-    const oscillator = siteAudioContext.createOscillator();
-    const filter = siteAudioContext.createBiquadFilter();
-    const envelope = siteAudioContext.createGain();
-    const frequency = ambientNotes[ambientNoteIndex % ambientNotes.length];
-    ambientNoteIndex += 1;
+        const oscillator = siteAudioContext.createOscillator();
+        const filter = siteAudioContext.createBiquadFilter();
+        const envelope = siteAudioContext.createGain();
+        const frequency = ambientNotes[ambientNoteIndex % ambientNotes.length];
+        ambientNoteIndex += 1;
 
     oscillator.type = 'sine';
-    oscillator.frequency.value = frequency;
-    filter.type = 'lowpass';
-    filter.frequency.value = 720;
-    envelope.gain.setValueAtTime(0.0001, now);
-    envelope.gain.exponentialRampToValueAtTime(0.14, now + 0.8);
-    envelope.gain.setTargetAtTime(0.0001, now + 2.7, 0.5);
+        oscillator.frequency.value = frequency;
+        filter.type = 'lowpass';
+        filter.frequency.value = 720;
+        envelope.gain.setValueAtTime(0.0001, now);
+        envelope.gain.exponentialRampToValueAtTime(0.14, now + 0.8);
+        envelope.gain.setTargetAtTime(0.0001, now + 2.7, 0.5);
 
     oscillator.connect(filter);
-    filter.connect(envelope);
-    envelope.connect(siteMusicGain);
-    oscillator.start(now);
-    oscillator.stop(now + 5);
-    oscillator.addEventListener('ended', () => {
-        oscillator.disconnect();
-        filter.disconnect();
-        envelope.disconnect();
-    }, { once: true });
+        filter.connect(envelope);
+        envelope.connect(siteMusicGain);
+        oscillator.start(now);
+        oscillator.stop(now + 5);
+        oscillator.addEventListener('ended', () => {
+                    oscillator.disconnect();
+                    filter.disconnect();
+                    envelope.disconnect();
+        }, { once: true });
+}
+
+function stopSandFallSound() {
+        if (sandFallStopTimer) {
+                    window.clearTimeout(sandFallStopTimer);
+                    sandFallStopTimer = null;
+        }
+        if (!siteAudioContext || !sandFallSoundSource) return;
+
+    const now = siteAudioContext.currentTime;
+        sandFallSoundGain.gain.cancelScheduledValues(now);
+        sandFallSoundGain.gain.setTargetAtTime(0.0001, now, 0.18);
+        if (sandFallFadeTimer) window.clearTimeout(sandFallFadeTimer);
+        sandFallFadeTimer = window.setTimeout(() => {
+                    sandFallFadeTimer = null;
+                    if (sandFallSoundSource) sandFallSoundSource.stop();
+        }, 900);
+}
+
+function startSandFallSound() {
+        if (!siteAudioContext || siteAudioContext.state !== 'running' || !sandFallNoiseBuffer) return;
+
+    const now = siteAudioContext.currentTime;
+        if (!sandFallSoundSource) {
+                    sandFallSoundSource = siteAudioContext.createBufferSource();
+                    sandFallSoundFilter = siteAudioContext.createBiquadFilter();
+                    sandFallSoundGain = siteAudioContext.createGain();
+                    const source = sandFallSoundSource;
+                    const filter = sandFallSoundFilter;
+                    const gain = sandFallSoundGain;
+                    source.buffer = sandFallNoiseBuffer;
+                    source.loop = true;
+                    filter.type = 'lowpass';
+                    filter.frequency.value = 1700;
+                    filter.Q.value = 0.5;
+                    gain.gain.setValueAtTime(0.0001, now);
+                    gain.gain.linearRampToValueAtTime(0.11, now + 0.12);
+
+            source.connect(filter);
+                    filter.connect(gain);
+                    gain.connect(siteSfxGain);
+                    source.addEventListener('ended', () => {
+                                    source.disconnect();
+                                    filter.disconnect();
+                                    gain.disconnect();
+                                    if (sandFallSoundSource !== source) return;
+                                    sandFallSoundSource = null;
+                                    sandFallSoundFilter = null;
+                                    sandFallSoundGain = null;
+                                    sandFallFadeTimer = null;
+                    }, { once: true });
+                    source.start(now);
+        } else if (sandFallFadeTimer) {
+                    window.clearTimeout(sandFallFadeTimer);
+                    sandFallFadeTimer = null;
+                    sandFallSoundGain.gain.cancelScheduledValues(now);
+                    sandFallSoundGain.gain.setTargetAtTime(0.11, now, 0.06);
+        }
+
+    if (sandFallStopTimer) window.clearTimeout(sandFallStopTimer);
+        sandFallStopTimer = window.setTimeout(stopSandFallSound, 700);
 }
 
 function startSiteAudio() {
-    if (!siteAudioContext) {
-        const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
-        if (!AudioContextConstructor) {
-            console.error('Web Audio is unavailable; site audio could not start.');
-            return;
+        if (!siteAudioContext) {
+                    const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+                    if (!AudioContextConstructor) {
+                                    console.error('Web Audio is unavailable; site audio could not start.');
+                                    return;
+                    }
+
+            siteAudioContext = new AudioContextConstructor();
+                    siteSfxGain = siteAudioContext.createGain();
+                    siteMusicGain = siteAudioContext.createGain();
+                    siteSfxGain.connect(siteAudioContext.destination);
+                    siteMusicGain.connect(siteAudioContext.destination);
+                    updateAudioSettings(false);
+
+            sandNoiseBuffer = siteAudioContext.createBuffer(
+                            1,
+                            Math.floor(siteAudioContext.sampleRate * 0.15),
+                            siteAudioContext.sampleRate,
+                        );
+                    const noiseSamples = sandNoiseBuffer.getChannelData(0);
+                    for (let i = 0; i < noiseSamples.length; i += 1) {
+                                    noiseSamples[i] = Math.random() * 2 - 1;
+                    }
+
+            sandFallNoiseBuffer = siteAudioContext.createBuffer(
+                            1,
+                            Math.floor(siteAudioContext.sampleRate * 2),
+                            siteAudioContext.sampleRate,
+                        );
+                    const sandFallSamples = sandFallNoiseBuffer.getChannelData(0);
+                    for (let i = 0; i < sandFallSamples.length; i += 1) {
+                                    sandFallSamples[i] = Math.random() * 2 - 1;
+                    }
+
+            for (const frequency of [55, 82.41, 110]) {
+                            const oscillator = siteAudioContext.createOscillator();
+                            const gain = siteAudioContext.createGain();
+                            oscillator.type = 'sine';
+                            oscillator.frequency.value = frequency;
+                            gain.gain.value = 0.1;
+                            oscillator.connect(gain);
+                            gain.connect(siteMusicGain);
+                            oscillator.start();
+            }
+
+            window.setInterval(playAmbientNote, 4200);
         }
-
-        siteAudioContext = new AudioContextConstructor();
-        siteSfxGain = siteAudioContext.createGain();
-        siteMusicGain = siteAudioContext.createGain();
-        siteSfxGain.connect(siteAudioContext.destination);
-        siteMusicGain.connect(siteAudioContext.destination);
-        updateAudioSettings(false);
-
-        sandNoiseBuffer = siteAudioContext.createBuffer(
-            1,
-            Math.floor(siteAudioContext.sampleRate * 0.15),
-            siteAudioContext.sampleRate,
-        );
-        const noiseSamples = sandNoiseBuffer.getChannelData(0);
-        for (let i = 0; i < noiseSamples.length; i += 1) {
-            noiseSamples[i] = Math.random() * 2 - 1;
-        }
-
-        for (const frequency of [55, 82.41, 110]) {
-            const oscillator = siteAudioContext.createOscillator();
-            const gain = siteAudioContext.createGain();
-            oscillator.type = 'sine';
-            oscillator.frequency.value = frequency;
-            gain.gain.value = 0.1;
-            oscillator.connect(gain);
-            gain.connect(siteMusicGain);
-            oscillator.start();
-        }
-
-        window.setInterval(playAmbientNote, 4200);
-    }
 
     if (siteAudioContext.state === 'suspended') {
-        siteAudioContext.resume()
-            .then(playAmbientNote)
-            .catch(error => console.error('Could not resume site audio:', error));
+                siteAudioContext.resume()
+                    .then(playAmbientNote)
+                    .catch(error => console.error('Could not resume site audio:', error));
     }
-}
-
-function playSandSound(event) {
-    if (!siteAudioContext || siteAudioContext.state !== 'running' || !sandNoiseBuffer) return;
-
-    const now = siteAudioContext.currentTime;
-    if (now - lastSandSoundAt < 0.17) return;
-    lastSandSoundAt = now;
-
-    const source = siteAudioContext.createBufferSource();
-    const filter = siteAudioContext.createBiquadFilter();
-    const envelope = siteAudioContext.createGain();
-    const speed = Math.min(1, Math.hypot(event.movementX, event.movementY) / 30);
-
-    source.buffer = sandNoiseBuffer;
-    filter.type = 'lowpass';
-    filter.frequency.value = 850 + Math.random() * 650;
-    envelope.gain.setValueAtTime(0.0001, now);
-    envelope.gain.exponentialRampToValueAtTime(0.12 + speed * 0.06, now + 0.015);
-    envelope.gain.exponentialRampToValueAtTime(0.0001, now + 0.13);
-
-    source.connect(filter);
-    filter.connect(envelope);
-    envelope.connect(siteSfxGain);
-    source.start(now);
-    source.stop(now + 0.15);
-    source.addEventListener('ended', () => {
-        source.disconnect();
-        filter.disconnect();
-        envelope.disconnect();
-    }, { once: true });
 }
 
 function playButtonSound() {
-    if (!siteAudioContext || siteAudioContext.state !== 'running') return;
+        if (!siteAudioContext || siteAudioContext.state !== 'running') return;
 
     const now = siteAudioContext.currentTime;
-    const oscillator = siteAudioContext.createOscillator();
-    const envelope = siteAudioContext.createGain();
+        const oscillator = siteAudioContext.createOscillator();
+        const envelope = siteAudioContext.createGain();
 
     oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(620, now);
-    oscillator.frequency.exponentialRampToValueAtTime(440, now + 0.05);
-    envelope.gain.setValueAtTime(0.0001, now);
-    envelope.gain.exponentialRampToValueAtTime(0.07, now + 0.004);
-    envelope.gain.exponentialRampToValueAtTime(0.0001, now + 0.06);
+        oscillator.frequency.setValueAtTime(620, now);
+        oscillator.frequency.exponentialRampToValueAtTime(440, now + 0.05);
+        envelope.gain.setValueAtTime(0.0001, now);
+        envelope.gain.exponentialRampToValueAtTime(0.07, now + 0.004);
+        envelope.gain.exponentialRampToValueAtTime(0.0001, now + 0.06);
 
     oscillator.connect(envelope);
-    envelope.connect(siteSfxGain);
-    oscillator.start(now);
-    oscillator.stop(now + 0.065);
-    oscillator.addEventListener('ended', () => {
-        oscillator.disconnect();
-        envelope.disconnect();
-    }, { once: true });
+        envelope.connect(siteSfxGain);
+        oscillator.start(now);
+        oscillator.stop(now + 0.065);
+        oscillator.addEventListener('ended', () => {
+                    oscillator.disconnect();
+                    envelope.disconnect();
+        }, { once: true });
 }
 
 function playVolumeDragSound() {
-    if (!siteAudioContext || siteAudioContext.state !== 'running' || !sandNoiseBuffer) return;
+        if (!siteAudioContext || siteAudioContext.state !== 'running' || !sandNoiseBuffer) return;
 
     const now = siteAudioContext.currentTime;
-    if (now - lastVolumeDragSoundAt < 0.12) return;
-    lastVolumeDragSoundAt = now;
+        if (now - lastVolumeDragSoundAt < 0.12) return;
+        lastVolumeDragSoundAt = now;
 
     const source = siteAudioContext.createBufferSource();
-    const filter = siteAudioContext.createBiquadFilter();
-    const envelope = siteAudioContext.createGain();
+        const filter = siteAudioContext.createBiquadFilter();
+        const envelope = siteAudioContext.createGain();
 
     source.buffer = sandNoiseBuffer;
-    filter.type = 'bandpass';
-    filter.frequency.value = 1200;
-    filter.Q.value = 0.8;
-    envelope.gain.setValueAtTime(0.0001, now);
-    envelope.gain.exponentialRampToValueAtTime(0.07, now + 0.01);
-    envelope.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
+        filter.type = 'bandpass';
+        filter.frequency.value = 1200;
+        filter.Q.value = 0.8;
+        envelope.gain.setValueAtTime(0.0001, now);
+        envelope.gain.exponentialRampToValueAtTime(0.07, now + 0.01);
+        envelope.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
 
     source.connect(filter);
-    filter.connect(envelope);
-    envelope.connect(siteSfxGain);
-    source.start(now);
-    source.stop(now + 0.1);
-    source.addEventListener('ended', () => {
-        source.disconnect();
-        filter.disconnect();
-        envelope.disconnect();
-    }, { once: true });
+        filter.connect(envelope);
+        envelope.connect(siteSfxGain);
+        source.start(now);
+        source.stop(now + 0.1);
+        source.addEventListener('ended', () => {
+                    source.disconnect();
+                    filter.disconnect();
+                    envelope.disconnect();
+        }, { once: true });
 }
 
 function getSavedVolume(key, fallback) {
-    const saved = localStorage.getItem(key);
-    if (saved === null) return fallback;
-    const value = Number(saved);
-    return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : fallback;
+        const saved = localStorage.getItem(key);
+        if (saved === null) return fallback;
+        const value = Number(saved);
+        return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : fallback;
 }
 
 function setSettingsOpen(isOpen) {
-    settingsPanel.classList.toggle('hidden', !isOpen);
-    settingsButton.setAttribute('aria-expanded', String(isOpen));
-    settingsButton.setAttribute('aria-label', isOpen ? 'Close settings' : 'Open settings');
+        settingsPanel.classList.toggle('hidden', !isOpen);
+        settingsButton.setAttribute('aria-expanded', String(isOpen));
+        settingsButton.setAttribute('aria-label', isOpen ? 'Close settings' : 'Open settings');
 }
 
 function installGameAudioVolumeBridge() {
-    const audioNodePrototype = gameFrame.contentWindow.AudioNode?.prototype;
-    if (!audioNodePrototype || audioNodePrototype.__mars668VolumeBridge) return;
+        const audioNodePrototype = gameFrame.contentWindow.AudioNode?.prototype;
+        if (!audioNodePrototype || audioNodePrototype.__mars668VolumeBridge) return;
 
     gameAudioGains.clear();
-    const nativeConnect = audioNodePrototype.connect;
-    const masterGains = new WeakMap();
+        const nativeConnect = audioNodePrototype.connect;
+        const masterGains = new WeakMap();
 
     audioNodePrototype.connect = function (destination, ...args) {
-        const audioContext = this.context;
-        if (!audioContext || destination !== audioContext.destination) {
-            return nativeConnect.call(this, destination, ...args);
-        }
+                const audioContext = this.context;
+                if (!audioContext || destination !== audioContext.destination) {
+                                return nativeConnect.call(this, destination, ...args);
+                }
 
-        let masterGain = masterGains.get(audioContext);
-        if (!masterGain) {
-            masterGain = audioContext.createGain();
-            masterGain.gain.value = muteGameAudio.checked ? 0 : Number(sfxVolume.value) / 100;
-            nativeConnect.call(masterGain, destination);
-            masterGains.set(audioContext, masterGain);
-            gameAudioGains.add(masterGain);
-        }
-        return nativeConnect.call(this, masterGain, ...args);
+                let masterGain = masterGains.get(audioContext);
+                if (!masterGain) {
+                                masterGain = audioContext.createGain();
+                                masterGain.gain.value = muteGameAudio.checked ? 0 : Number(sfxVolume.value) / 100;
+                                nativeConnect.call(masterGain, destination);
+                                masterGains.set(audioContext, masterGain);
+                                gameAudioGains.add(masterGain);
+                }
+                return nativeConnect.call(this, masterGain, ...args);
     };
 
     Object.defineProperty(audioNodePrototype, '__mars668VolumeBridge', { value: true });
 }
 
 function syncGameMuteButton(isMuted) {
-    if (!gameFrame.getAttribute('src')) return;
-    const muteButton = gameFrame.contentDocument.querySelector(
-        'button[aria-label="Mute audio"], button[aria-label="Unmute audio"]',
-    );
-    if (!muteButton) return;
+        if (!gameFrame.getAttribute('src')) return;
+        const muteButton = gameFrame.contentDocument.querySelector(
+                    'button[aria-label="Mute audio"], button[aria-label="Unmute audio"]',
+                );
+        if (!muteButton) return;
 
     const gameIsMuted = muteButton.getAttribute('aria-label') === 'Unmute audio';
-    if (gameIsMuted !== isMuted) muteButton.click();
+        if (gameIsMuted !== isMuted) muteButton.click();
 }
 
 function updateAudioSettings(save = true) {
-    const sfx = Number(sfxVolume.value);
-    const music = Number(musicVolume.value);
-    const muted = muteGameAudio.checked || sfx === 0;
-    const effectiveSfx = muted ? 0 : sfx / 100;
-    const effectiveMusic = muteGameAudio.checked ? 0 : music / 100;
-    sfxValue.value = `${sfx}%`;
-    musicValue.value = `${music}%`;
+        const sfx = Number(sfxVolume.value);
+        const music = Number(musicVolume.value);
+        const muted = muteGameAudio.checked || sfx === 0;
+        const effectiveSfx = muted ? 0 : sfx / 100;
+        const effectiveMusic = muteGameAudio.checked ? 0 : music / 100;
+        sfxValue.value = `${sfx}%`;
+        musicValue.value = `${music}%`;
 
     if (save) {
-        localStorage.setItem('mars668-sfx-volume', String(sfx));
-        localStorage.setItem('mars668-music-volume', String(music));
-        localStorage.setItem('mars668-mute-game-audio', String(muteGameAudio.checked));
+                localStorage.setItem('mars668-sfx-volume', String(sfx));
+                localStorage.setItem('mars668-music-volume', String(music));
+                localStorage.setItem('mars668-mute-game-audio', String(muteGameAudio.checked));
     }
 
     if (siteAudioContext) {
-        siteSfxGain.gain.setTargetAtTime(effectiveSfx * 0.45, siteAudioContext.currentTime, 0.04);
-        siteMusicGain.gain.setTargetAtTime(
-            (muteGameAudio.checked ? 0 : music / 100) * 0.22,
-            siteAudioContext.currentTime,
-            0.2,
-        );
+                siteSfxGain.gain.setTargetAtTime(effectiveSfx * 0.45, siteAudioContext.currentTime, 0.04);
+                siteMusicGain.gain.setTargetAtTime(
+                                (muteGameAudio.checked ? 0 : music / 100) * 0.22,
+                                siteAudioContext.currentTime,
+                                0.2,
+                            );
     }
 
     for (const gain of gameAudioGains) {
-        gain.gain.setTargetAtTime(effectiveSfx, gain.context.currentTime, 0.02);
+                gain.gain.setTargetAtTime(effectiveSfx, gain.context.currentTime, 0.02);
     }
-    syncGameMuteButton(muted);
+        syncGameMuteButton(muted);
 
     if (gameFrame.getAttribute('src')) {
-        gameFrame.contentWindow.postMessage({
-            type: 'mars668-audio-settings',
-            sfx: effectiveSfx,
-            music: effectiveMusic,
-            muted,
-        }, window.location.origin);
+                gameFrame.contentWindow.postMessage({
+                                type: 'mars668-audio-settings',
+                                sfx: effectiveSfx,
+                                music: effectiveMusic,
+                                muted,
+                }, window.location.origin);
     }
 }
 
@@ -303,39 +348,40 @@ updateAudioSettings(false);
 window.addEventListener('pointerdown', startSiteAudio);
 window.addEventListener('keydown', startSiteAudio);
 for (const volumeSlider of [sfxVolume, musicVolume]) {
-    volumeSlider.addEventListener('pointerdown', event => {
-        activeVolumePointerId = event.pointerId;
-    });
-    volumeSlider.addEventListener('input', () => {
-        updateAudioSettings();
-        if (activeVolumePointerId !== null) playVolumeDragSound();
-    });
+        volumeSlider.addEventListener('pointerdown', event => {
+                    activeVolumePointerId = event.pointerId;
+        });
+        volumeSlider.addEventListener('input', () => {
+                    updateAudioSettings();
+                    if (activeVolumePointerId !== null) playVolumeDragSound();
+        });
 }
 const stopVolumeDragSound = event => {
-    if (event.pointerId === activeVolumePointerId) activeVolumePointerId = null;
+        if (event.pointerId === activeVolumePointerId) activeVolumePointerId = null;
 };
 window.addEventListener('pointerup', stopVolumeDragSound);
 window.addEventListener('pointercancel', stopVolumeDragSound);
 muteGameAudio.addEventListener('change', () => updateAudioSettings());
 gameFrame.addEventListener('load', () => {
-    if (!gameFrame.getAttribute('src')) return;
-    installGameAudioVolumeBridge();
-    updateAudioSettings(false);
+        if (!gameFrame.getAttribute('src')) return;
+        installGameAudioVolumeBridge();
+        updateAudioSettings(false);
 });
 
 function sendSandEvent(type, event) {
-    if (landingPage.classList.contains('hidden')) return;
+        if (landingPage.classList.contains('hidden')) return;
 
-    if (type === 'move'
-        && !(event.target instanceof Element && event.target.closest('#settings-widget'))) {
-        playSandSound(event);
+    if (type === 'move' && event.target instanceof Element
+                && event.target.closest('#settings-widget')) {
+                sandBackground.contentWindow.postMessage({ type: 'pixel-sand-leave' }, window.location.origin);
+                return;
     }
-    sandBackground.contentWindow.postMessage({
-        type: `pixel-sand-${type}`,
-        clientX: event.clientX,
-        clientY: event.clientY,
-        pointerType: event.pointerType,
-    }, window.location.origin);
+        sandBackground.contentWindow.postMessage({
+                    type: `pixel-sand-${type}`,
+                    clientX: event.clientX,
+                    clientY: event.clientY,
+                    pointerType: event.pointerType,
+        }, window.location.origin);
 }
 
 window.addEventListener('pointermove', event => sendSandEvent('move', event), { passive: true });
@@ -343,91 +389,98 @@ window.addEventListener('pointerup', event => sendSandEvent('up', event));
 document.documentElement.addEventListener('pointerleave', event => sendSandEvent('leave', event));
 window.addEventListener('blur', event => sendSandEvent('leave', event));
 document.addEventListener('click', event => {
-    const button = event.target instanceof Element ? event.target.closest('button') : null;
-    if (button && !button.disabled) playButtonSound();
+        const button = event.target instanceof Element ? event.target.closest('button') : null;
+        if (button && !button.disabled) playButtonSound();
 });
 
 window.addEventListener('message', event => {
-    if (event.source !== sandBackground.contentWindow
-        || event.origin !== window.location.origin
-        || event.data?.type !== 'pixel-sand-earth-covered'
-        || earthCovered) {
-        return;
-    }
+        if (event.source !== sandBackground.contentWindow
+                    || event.origin !== window.location.origin) {
+                    return;
+        }
 
-    earthCovered = true;
-    const sandCanvas = sandBackground.contentDocument.querySelector('#sand-bg');
-    earthSandLayer.src = sandCanvas.toDataURL('image/png');
-    landingPage.classList.add('mars-revealed');
-    worldBackground.classList.add('mars-revealed');
-    sandBackground.contentWindow.postMessage({ type: 'pixel-sand-reset' }, window.location.origin);
+                            if (event.data?.type === 'pixel-sand-falling') {
+                                        if (!landingPage.classList.contains('hidden')) startSandFallSound();
+                                        return;
+                            }
+        if (event.data?.type !== 'pixel-sand-earth-covered' || earthCovered) return;
+
+                            earthCovered = true;
+        stopSandFallSound();
+        const sandCanvas = sandBackground.contentDocument.querySelector('#sand-bg');
+        earthSandLayer.src = sandCanvas.toDataURL('image/png');
+        landingPage.classList.add('mars-revealed');
+        worldBackground.classList.add('mars-revealed');
+        sandBackground.contentWindow.postMessage({ type: 'pixel-sand-reset' }, window.location.origin);
 });
 
 settingsButton.addEventListener('click', () => {
-    const isOpen = settingsButton.getAttribute('aria-expanded') === 'true';
-    setSettingsOpen(!isOpen);
+        const isOpen = settingsButton.getAttribute('aria-expanded') === 'true';
+        setSettingsOpen(!isOpen);
 });
 
 settingsCloseButton.addEventListener('click', () => setSettingsOpen(false));
 document.addEventListener('pointerdown', event => {
-    if (!settingsPanel.classList.contains('hidden') && !event.target.closest('#settings-widget')) {
-        setSettingsOpen(false);
-    }
+        if (!settingsPanel.classList.contains('hidden') && !event.target.closest('#settings-widget')) {
+                    setSettingsOpen(false);
+        }
 });
 document.addEventListener('keydown', event => {
-    if (event.key === 'Escape') setSettingsOpen(false);
+        if (event.key === 'Escape') setSettingsOpen(false);
 });
 
 aboutUsButton.addEventListener('click', () => {
-    setSettingsOpen(false);
-    landingPage.classList.add('hidden');
-    aboutPage.classList.remove('hidden');
+        stopSandFallSound();
+        setSettingsOpen(false);
+        landingPage.classList.add('hidden');
+        aboutPage.classList.remove('hidden');
 });
 
 aboutBackButton.addEventListener('click', () => {
-    aboutPage.classList.add('hidden');
-    landingPage.classList.remove('hidden');
+        aboutPage.classList.add('hidden');
+        landingPage.classList.remove('hidden');
 });
 
 function updateFullscreenButton() {
-    const isFullscreen = document.fullscreenElement === gamePage;
-    fullscreenButton.textContent = isFullscreen ? 'EXIT FULLSCREEN' : 'FULLSCREEN';
-    fullscreenButton.setAttribute('aria-label', isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen');
-    fullscreenStatus.textContent = '';
+        const isFullscreen = document.fullscreenElement === gamePage;
+        fullscreenButton.textContent = isFullscreen ? 'EXIT FULLSCREEN' : 'FULLSCREEN';
+        fullscreenButton.setAttribute('aria-label', isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen');
+        fullscreenStatus.textContent = '';
 }
 
 fullscreenButton.addEventListener('click', async () => {
-    fullscreenStatus.textContent = '';
-    try {
-        if (document.fullscreenElement === gamePage) {
-            await document.exitFullscreen();
-        } else {
-            await gamePage.requestFullscreen();
+        fullscreenStatus.textContent = '';
+        try {
+                    if (document.fullscreenElement === gamePage) {
+                                    await document.exitFullscreen();
+                    } else {
+                                    await gamePage.requestFullscreen();
+                    }
+        } catch (error) {
+                    console.error('Could not change fullscreen mode:', error);
+                    fullscreenStatus.textContent = 'Fullscreen unavailable';
         }
-    } catch (error) {
-        console.error('Could not change fullscreen mode:', error);
-        fullscreenStatus.textContent = 'Fullscreen unavailable';
-    }
 });
 
 document.addEventListener('fullscreenchange', updateFullscreenButton);
 
 playButton.addEventListener('click', () => {
-    setSettingsOpen(false);
-    sandBackground.classList.add('hidden');
-    landingPage.classList.add('hidden');
-    gamePage.classList.remove('hidden');
+        stopSandFallSound();
+        setSettingsOpen(false);
+        sandBackground.classList.add('hidden');
+        landingPage.classList.add('hidden');
+        gamePage.classList.remove('hidden');
 
-    gameFrame.src = `${import.meta.env.BASE_URL}game/Mars365-HTML5.html`;
+                                gameFrame.src = `${import.meta.env.BASE_URL}game/Mars365-HTML5.html`;
 });
 
 backButton.addEventListener('click', async () => {
-    setSettingsOpen(false);
-    if (document.fullscreenElement === gamePage) await document.exitFullscreen();
-    gameFrame.src = '';
-    gameAudioGains.clear();
+        setSettingsOpen(false);
+        if (document.fullscreenElement === gamePage) await document.exitFullscreen();
+        gameFrame.src = '';
+        gameAudioGains.clear();
 
-    sandBackground.classList.remove('hidden');
-    gamePage.classList.add('hidden');
-    landingPage.classList.remove('hidden');
+                                sandBackground.classList.remove('hidden');
+        gamePage.classList.add('hidden');
+        landingPage.classList.remove('hidden');
 });
