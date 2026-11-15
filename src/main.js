@@ -33,6 +33,121 @@ const worldBackground = document.querySelector('#world-background');
 const earthSandLayer = document.querySelector('#earth-sand-layer');
 let earthCovered = false;
 const gameAudioGains = new Set();
+let siteAudioContext;
+let siteSfxGain;
+let siteMusicGain;
+let sandNoiseBuffer;
+let lastSandSoundAt = 0;
+let ambientNoteIndex = 0;
+
+const ambientNotes = [220, 261.63, 329.63, 392, 329.63, 261.63];
+
+function playAmbientNote() {
+    if (!siteAudioContext || siteAudioContext.state !== 'running') return;
+
+    const now = siteAudioContext.currentTime;
+    const oscillator = siteAudioContext.createOscillator();
+    const filter = siteAudioContext.createBiquadFilter();
+    const envelope = siteAudioContext.createGain();
+    const frequency = ambientNotes[ambientNoteIndex % ambientNotes.length];
+    ambientNoteIndex += 1;
+
+    oscillator.type = 'sine';
+    oscillator.frequency.value = frequency;
+    filter.type = 'lowpass';
+    filter.frequency.value = 720;
+    envelope.gain.setValueAtTime(0.0001, now);
+    envelope.gain.exponentialRampToValueAtTime(0.14, now + 0.8);
+    envelope.gain.setTargetAtTime(0.0001, now + 2.7, 0.5);
+
+    oscillator.connect(filter);
+    filter.connect(envelope);
+    envelope.connect(siteMusicGain);
+    oscillator.start(now);
+    oscillator.stop(now + 5);
+    oscillator.addEventListener('ended', () => {
+        oscillator.disconnect();
+        filter.disconnect();
+        envelope.disconnect();
+    }, { once: true });
+}
+
+function startSiteAudio() {
+    if (!siteAudioContext) {
+        const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextConstructor) {
+            console.error('Web Audio is unavailable; site audio could not start.');
+            return;
+        }
+
+        siteAudioContext = new AudioContextConstructor();
+        siteSfxGain = siteAudioContext.createGain();
+        siteMusicGain = siteAudioContext.createGain();
+        siteSfxGain.connect(siteAudioContext.destination);
+        siteMusicGain.connect(siteAudioContext.destination);
+        updateAudioSettings(false);
+
+        sandNoiseBuffer = siteAudioContext.createBuffer(
+            1,
+            Math.floor(siteAudioContext.sampleRate * 0.15),
+            siteAudioContext.sampleRate,
+        );
+        const noiseSamples = sandNoiseBuffer.getChannelData(0);
+        for (let i = 0; i < noiseSamples.length; i += 1) {
+            noiseSamples[i] = Math.random() * 2 - 1;
+        }
+
+        for (const frequency of [55, 82.41, 110]) {
+            const oscillator = siteAudioContext.createOscillator();
+            const gain = siteAudioContext.createGain();
+            oscillator.type = 'sine';
+            oscillator.frequency.value = frequency;
+            gain.gain.value = 0.1;
+            oscillator.connect(gain);
+            gain.connect(siteMusicGain);
+            oscillator.start();
+        }
+
+        window.setInterval(playAmbientNote, 4200);
+    }
+
+    if (siteAudioContext.state === 'suspended') {
+        siteAudioContext.resume()
+            .then(playAmbientNote)
+            .catch(error => console.error('Could not resume site audio:', error));
+    }
+}
+
+function playSandSound(event) {
+    if (!siteAudioContext || siteAudioContext.state !== 'running' || !sandNoiseBuffer) return;
+
+    const now = siteAudioContext.currentTime;
+    if (now - lastSandSoundAt < 0.17) return;
+    lastSandSoundAt = now;
+
+    const source = siteAudioContext.createBufferSource();
+    const filter = siteAudioContext.createBiquadFilter();
+    const envelope = siteAudioContext.createGain();
+    const speed = Math.min(1, Math.hypot(event.movementX, event.movementY) / 30);
+
+    source.buffer = sandNoiseBuffer;
+    filter.type = 'lowpass';
+    filter.frequency.value = 850 + Math.random() * 650;
+    envelope.gain.setValueAtTime(0.0001, now);
+    envelope.gain.exponentialRampToValueAtTime(0.12 + speed * 0.06, now + 0.015);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, now + 0.13);
+
+    source.connect(filter);
+    filter.connect(envelope);
+    envelope.connect(siteSfxGain);
+    source.start(now);
+    source.stop(now + 0.15);
+    source.addEventListener('ended', () => {
+        source.disconnect();
+        filter.disconnect();
+        envelope.disconnect();
+    }, { once: true });
+}
 
 function getSavedVolume(key, fallback) {
     const saved = localStorage.getItem(key);
@@ -101,6 +216,15 @@ function updateAudioSettings(save = true) {
         localStorage.setItem('mars668-mute-game-audio', String(muteGameAudio.checked));
     }
 
+    if (siteAudioContext) {
+        siteSfxGain.gain.setTargetAtTime(effectiveSfx * 0.45, siteAudioContext.currentTime, 0.04);
+        siteMusicGain.gain.setTargetAtTime(
+            (muteGameAudio.checked ? 0 : music / 100) * 0.22,
+            siteAudioContext.currentTime,
+            0.2,
+        );
+    }
+
     for (const gain of gameAudioGains) {
         gain.gain.setTargetAtTime(effectiveSfx, gain.context.currentTime, 0.02);
     }
@@ -120,6 +244,8 @@ sfxVolume.value = String(getSavedVolume('mars668-sfx-volume', 80));
 musicVolume.value = String(getSavedVolume('mars668-music-volume', 70));
 muteGameAudio.checked = localStorage.getItem('mars668-mute-game-audio') === 'true';
 updateAudioSettings(false);
+window.addEventListener('pointerdown', startSiteAudio);
+window.addEventListener('keydown', startSiteAudio);
 sfxVolume.addEventListener('input', () => updateAudioSettings());
 musicVolume.addEventListener('input', () => updateAudioSettings());
 muteGameAudio.addEventListener('change', () => updateAudioSettings());
@@ -132,6 +258,7 @@ gameFrame.addEventListener('load', () => {
 function sendSandEvent(type, event) {
     if (landingPage.classList.contains('hidden')) return;
 
+    if (type === 'move') playSandSound(event);
     sandBackground.contentWindow.postMessage({
         type: `pixel-sand-${type}`,
         clientX: event.clientX,
